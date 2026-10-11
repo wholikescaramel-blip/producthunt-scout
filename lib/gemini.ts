@@ -6,48 +6,44 @@ export interface Enrichment {
   angle: string;
 }
 
-// Preferred model first, then other Flash models; tried in order when one is overloaded or unavailable.
-const MODELS = [...new Set([process.env.GEMINI_MODEL, "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.8-flash", "gemini-flash-lite-latest", "gemini-3.1-flash-lite"].filter(Boolean) as string[])];
-const BUDGET_MS = 42_000; // whole Gemini step must finish well inside the 60s function limit
+// Flash models, fastest-to-respond first. The first group is raced in parallel (first success wins),
+// so one overloaded model (503) or slow model doesn't stall the request; the rest are sequential backups.
+const PRIMARY = [...new Set([process.env.GEMINI_MODEL, "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-flash-lite-latest"].filter(Boolean) as string[])].slice(0, 3);
+const BACKUP = ["gemini-3.8-flash", "gemini-3.1-flash-lite"].filter((m) => !PRIMARY.includes(m));
+const BUDGET_MS = 30_000; // whole Gemini step must finish well inside the 60s function limit
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function callModel(model: string, key: string, prompt: string, timeoutMs: number): Promise<string> {
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.4 },
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) throw new Error(`${model}: HTTP ${res.status}`);
+  const json = await res.json();
+  const text: string = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  if (!text) throw new Error(`${model}: empty response`);
+  return text;
+}
 
-async function callGemini(key: string, prompt: string): Promise<string> {
-  let lastErr = "no model tried";
+export async function callGemini(key: string, prompt: string): Promise<string> {
   const deadline = Date.now() + BUDGET_MS;
-  for (const model of MODELS) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const remaining = deadline - Date.now();
-      if (remaining < 3000) throw new Error(`${lastErr} (time budget used up)`);
-      try {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
-            generationConfig: { responseMimeType: "application/json", temperature: 0.4 },
-          }),
-          signal: AbortSignal.timeout(Math.min(20_000, remaining)),
-        });
-        if (res.ok) {
-          const json = await res.json();
-          const text: string = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-          if (text) return text;
-          lastErr = `${model}: empty response`;
-          break;
-        }
-        lastErr = `${model}: HTTP ${res.status}`;
-        if (res.status === 429 || res.status === 503) {
-          await sleep(800 * (attempt + 1));
-          continue; // overloaded: retry once, then move to the next model
-        }
-        break; // 404 / 400 etc: this model won't work, try the next
-      } catch (e) {
-        lastErr = `${model}: ${(e as Error).message}`;
-      }
+  let lastErr = "no model tried";
+  const groups = [PRIMARY, ...BACKUP.map((m) => [m])];
+  for (const group of groups) {
+    const remaining = deadline - Date.now();
+    if (remaining < 3000) break;
+    try {
+      return await Promise.any(group.map((m) => callModel(m, key, prompt, Math.min(18_000, remaining))));
+    } catch (e) {
+      const errs = (e as AggregateError).errors ?? [e];
+      lastErr = errs.map((x: Error) => x.message).join("; ");
     }
   }
-  throw new Error(lastErr);
+  throw new Error(`${lastErr} (all Gemini models failed or time budget used up)`);
 }
 
 function templateEnrichment(p: PHPost, profileName: string): Enrichment {
@@ -58,11 +54,29 @@ function templateEnrichment(p: PHPost, profileName: string): Enrichment {
   };
 }
 
-/** One batched Gemini call for all products. Any failure falls back to a template so the list still ships. */
+type Items = Map<string, Enrichment & { source: "gemini" | "template" }>;
+const BATCH_SIZE = 5;
+
+/** Products are enriched in small parallel batches: each call is faster, and one slow batch can't sink the whole list. */
 export async function enrich(
   posts: PHPost[],
   profile: { name: string; description: string }
-): Promise<{ items: Map<string, Enrichment & { source: "gemini" | "template" }>; warning?: string }> {
+): Promise<{ items: Items; warning?: string }> {
+  const batches: PHPost[][] = [];
+  for (let i = 0; i < posts.length; i += BATCH_SIZE) batches.push(posts.slice(i, i + BATCH_SIZE));
+  const results = await Promise.all(batches.map((b) => enrichBatch(b, profile)));
+  const items: Items = new Map();
+  for (const r of results) for (const [k, v] of r.items) items.set(k, v);
+  const fellBack = [...items.values()].filter((v) => v.source === "template").length;
+  const detail = results.find((r) => r.warning)?.warning;
+  return { items, warning: fellBack ? `Template angles used for ${fellBack} of ${posts.length} products. ${detail ?? ""}`.trim() : undefined };
+}
+
+/** One Gemini call for one batch. Any failure falls back to a template so the list still ships. */
+async function enrichBatch(
+  posts: PHPost[],
+  profile: { name: string; description: string }
+): Promise<{ items: Items; warning?: string }> {
   const items = new Map<string, Enrichment & { source: "gemini" | "template" }>();
   const fallback = (warning?: string) => {
     for (const p of posts) items.set(p.id, { ...templateEnrichment(p, profile.name), source: "template" });
@@ -110,5 +124,38 @@ Respond with ONLY a JSON array: [{"id": "...", "oneLiner": "...", "angle": "..."
     return { items, warning: missing ? `Gemini skipped ${missing} product(s); template angles used for those.` : undefined };
   } catch (err) {
     return fallback(`Gemini failed (${(err as Error).message}) - using template outreach angles.`);
+  }
+}
+
+export interface DraftInput {
+  profile: { name: string; description: string };
+  product: { name: string; tagline: string; founder: string; angle: string; daysSinceLaunch: number };
+}
+
+function templateDraft({ profile, product }: DraftInput): string {
+  const hello = /^(Not listed|Unknown)/.test(product.founder) ? "Hi there" : `Hi ${product.founder.replace(/ \(hunter\)$/, "").split(" ")[0]}`;
+  return `${hello} - congrats on launching ${product.name} on Product Hunt! I work on ${profile.name}. ${product.angle} Would you be open to a quick chat this week about it?`;
+}
+
+/** Short first-touch note for one founder. Falls back to a template if Gemini is unavailable. */
+export async function draftMessage(input: DraftInput): Promise<{ message: string; source: "gemini" | "template"; warning?: string }> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return { message: templateDraft(input), source: "template", warning: "GEMINI_API_KEY is not set - template draft used." };
+  const { profile, product } = input;
+  const prompt = `Write a short, warm first-touch partnership message (max 70 words, plain text, no subject line, no placeholders in brackets) from a partnerships lead at "${profile.name}" to the founder of a newly launched product.
+
+Sender's company: ${profile.description}
+Founder: ${product.founder.replace(/ \(hunter\)$/, "")} ${/hunter|Not listed|Unknown/.test(product.founder) ? "(name uncertain - greet generically)" : ""}
+Their product: ${product.name} - ${product.tagline}
+Launched ${product.daysSinceLaunch === 0 ? "today" : product.daysSinceLaunch + " day(s) ago"} on Product Hunt.
+Partnership angle to propose: ${product.angle}
+
+Congratulate them briefly, make the angle concrete, end with one low-pressure ask. Respond with ONLY JSON: {"message": "..."}`;
+  try {
+    const parsed = JSON.parse(await callGemini(key, prompt)) as { message?: string };
+    if (!parsed.message) throw new Error("empty message");
+    return { message: parsed.message.trim(), source: "gemini" };
+  } catch (err) {
+    return { message: templateDraft(input), source: "template", warning: `Gemini failed (${(err as Error).message}) - template draft used.` };
   }
 }

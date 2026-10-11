@@ -7,7 +7,10 @@ export const TOPICS: { slug: string; label: string }[] = [
   { slug: "productivity", label: "Productivity" },
 ];
 
-export const DEFAULT_TOPICS = TOPICS.map((t) => t.slug);
+// Quick picks are shown as chips and the first few start selected; users can also search any Product Hunt topic.
+export const DEFAULT_TOPICS = ["task-management", "human-resources", "developer-tools"];
+export const MAX_TOPICS = 5;
+export const TOPIC_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,59}$/;
 
 export const DEFAULT_PROFILE = {
   name: "Async standup tool",

@@ -34,12 +34,13 @@ const QUERY = /* GraphQL */ `
           tagline
           description
           url
+          website
           votesCount
           commentsCount
           createdAt
           featuredAt
           user { name }
-          makers { id name username }
+          makers { id name username twitterUsername websiteUrl }
           topics(first: 6) { edges { node { slug } } }
           comments(first: 15, order: NEWEST) {
             edges {
@@ -64,12 +65,13 @@ interface RawNode {
   tagline: string;
   description: string | null;
   url: string;
+  website: string | null;
   votesCount: number;
   commentsCount: number;
   createdAt: string;
   featuredAt: string | null;
   user: { name: string } | null;
-  makers: { id: string; name: string; username: string }[];
+  makers: { id: string; name: string; username: string; twitterUsername: string | null; websiteUrl: string | null }[];
   topics: { edges: { node: { slug: string } }[] };
   comments: {
     edges: {
@@ -92,6 +94,7 @@ function normalise(n: RawNode): PHPost {
     tagline: n.tagline,
     description: n.description ?? "",
     url: n.url.split("?")[0],
+    website: n.website,
     votesCount: n.votesCount,
     commentsCount: n.commentsCount,
     launchedAt: n.featuredAt ?? n.createdAt,
@@ -151,4 +154,27 @@ export async function fetchLaunches(topics: string[], days: number): Promise<Fet
   });
   if (failures === topics.length) throw new Error(warnings.join(" | "));
   return { posts: [...byId.values()], warnings };
+}
+
+export interface TopicHit {
+  slug: string;
+  name: string;
+}
+
+/** Search Product Hunt topics by keyword (for the category picker). */
+export async function searchTopics(query: string): Promise<TopicHit[]> {
+  const token = await getToken();
+  const res = await fetch(API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, Accept: "application/json" },
+    body: JSON.stringify({
+      query: `query($q: String!) { topics(query: $q, first: 8, order: FOLLOWERS_COUNT) { edges { node { slug name } } } }`,
+      variables: { q: query },
+    }),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Product Hunt API ${res.status}`);
+  const json = (await res.json()) as { data?: { topics: { edges: { node: TopicHit }[] } }; errors?: { message?: string }[] };
+  if (json.errors?.length) throw new Error(json.errors[0].message ?? "topic search failed");
+  return (json.data?.topics.edges ?? []).map((e) => e.node);
 }

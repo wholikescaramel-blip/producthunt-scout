@@ -2,7 +2,7 @@ import snapshotFile from "../data/snapshot.json";
 import { MAX_RESULTS } from "./config";
 import { enrich } from "./gemini";
 import { fetchLaunches } from "./producthunt";
-import { daysSince, founderName, scorePosts } from "./scoring";
+import { contactLinks, daysSince, founderName, scorePosts } from "./scoring";
 import type { PHPost, ScoutRequest, ScoutResponse } from "./types";
 
 const snapshot = snapshotFile as { savedAt: string | null; posts: PHPost[] };
@@ -63,6 +63,8 @@ export async function runScout(req: ScoutRequest): Promise<ScoutResponse> {
         score: r.score,
         outreachAngle: e.angle,
         angleSource: e.source,
+        tagline: r.post.tagline,
+        contact: contactLinks(r.post),
       };
     }),
   };

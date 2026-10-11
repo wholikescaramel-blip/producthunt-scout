@@ -2,6 +2,8 @@ export interface PHMaker {
   id: string;
   name: string;
   username: string;
+  twitterUsername?: string | null;
+  websiteUrl?: string | null;
 }
 
 export interface PHComment {
@@ -19,6 +21,7 @@ export interface PHPost {
   tagline: string;
   description: string;
   url: string;
+  website?: string | null;
   votesCount: number;
   commentsCount: number;
   launchedAt: string; // ISO
@@ -26,6 +29,15 @@ export interface PHPost {
   hunter: string | null;
   topics: string[];
   comments: PHComment[];
+}
+
+export interface ContactLinks {
+  productHuntUrl: string;
+  productWebsite?: string;
+  makerName?: string;
+  makerProfileUrl?: string;
+  makerTwitterUrl?: string;
+  makerWebsiteUrl?: string;
 }
 
 export interface ScoredProduct {
@@ -42,6 +54,8 @@ export interface ScoredProduct {
   score: number; // 0-100
   outreachAngle: string;
   angleSource: "gemini" | "template";
+  tagline: string;
+  contact: ContactLinks;
 }
 
 export interface ScoutRequest {

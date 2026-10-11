@@ -1,5 +1,5 @@
 import { GENERIC_COMMENT_WEIGHT, WEIGHT_MAKER, WEIGHT_UPVOTES } from "./config";
-import type { PHComment, PHPost } from "./types";
+import type { ContactLinks, PHComment, PHPost } from "./types";
 
 const THANKS = /\b(thanks?|thank you|thx|ty|appreciate|cheers|welcome|glad you)\b/i;
 
@@ -57,4 +57,17 @@ export function founderName(post: PHPost): string {
   if (maker) return maker;
   if (usable(post.hunter)) return `${post.hunter} (hunter)`;
   return "Not listed";
+}
+
+/** Where to reach the founders. Product Hunt exposes no emails, so we link to public profiles only. */
+export function contactLinks(post: PHPost): ContactLinks {
+  const maker = post.makers.find((m) => usable(m.name));
+  return {
+    productHuntUrl: post.url,
+    productWebsite: post.website || undefined,
+    makerName: maker?.name,
+    makerProfileUrl: maker?.username ? `https://www.producthunt.com/@${maker.username}` : undefined,
+    makerTwitterUrl: maker?.twitterUsername ? `https://x.com/${maker.twitterUsername}` : undefined,
+    makerWebsiteUrl: maker?.websiteUrl || undefined,
+  };
 }
