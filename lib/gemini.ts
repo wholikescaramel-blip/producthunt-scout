@@ -7,14 +7,18 @@ export interface Enrichment {
 }
 
 // Preferred model first, then other Flash models; tried in order when one is overloaded or unavailable.
-const MODELS = [...new Set([process.env.GEMINI_MODEL, "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview"].filter(Boolean) as string[])];
+const MODELS = [...new Set([process.env.GEMINI_MODEL, "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.8-flash", "gemini-flash-lite-latest", "gemini-3.1-flash-lite"].filter(Boolean) as string[])];
+const BUDGET_MS = 42_000; // whole Gemini step must finish well inside the 60s function limit
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function callGemini(key: string, prompt: string): Promise<string> {
   let lastErr = "no model tried";
+  const deadline = Date.now() + BUDGET_MS;
   for (const model of MODELS) {
     for (let attempt = 0; attempt < 2; attempt++) {
+      const remaining = deadline - Date.now();
+      if (remaining < 3000) throw new Error(`${lastErr} (time budget used up)`);
       try {
         const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
           method: "POST",
@@ -23,7 +27,7 @@ async function callGemini(key: string, prompt: string): Promise<string> {
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: { responseMimeType: "application/json", temperature: 0.4 },
           }),
-          signal: AbortSignal.timeout(20_000),
+          signal: AbortSignal.timeout(Math.min(20_000, remaining)),
         });
         if (res.ok) {
           const json = await res.json();
