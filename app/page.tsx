@@ -355,7 +355,7 @@ export default function Home() {
 
         <section className="hero">
           <h1 className="hero-in">
-            Catch new launches <em>while they&apos;re warm.</em>
+            Your partnership pipeline, <em>in bloom.</em>
           </h1>
           <p className="lede hero-in">
             Ranked by traction, maker response and fit, with an outreach angle for each.
