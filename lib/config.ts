@@ -19,10 +19,18 @@ export const DEFAULT_PROFILE = {
 };
 
 export const WINDOW_DAYS = 7;
-export const POSTS_PER_TOPIC = 15;
-export const MAX_RESULTS = 15;
+export const PAGE_SIZE = 20; // Product Hunt returns at most 20 posts per page
+export const PAGES_PER_TOPIC = 3; // up to 60 launches per category
+export const CANDIDATES = 60; // launches (by upvotes) we fetch comments for
+export const COMMENTS_PER_POST = 40; // newest comments read per launch
+export const COMMENT_CHUNK = 12; // launches per comments query (keeps each query under the API complexity cap)
 
-// Score weights: upvotes and maker comments, as specified in the brief.
+export const MAX_RESULTS = 50; // ranked list length
+export const INITIAL_SHOWN = 20; // rows shown first
+export const SHOW_MORE_STEP = 10;
+export const INITIAL_ENRICH = 20; // products that get Gemini angles up front
+
+// Score = 60% upvotes + 40% maker responsiveness (the two signals in the brief).
 export const WEIGHT_UPVOTES = 0.6;
 export const WEIGHT_MAKER = 0.4;
 // A maker comment that is just a thank-you / generic reply still counts, at this weight.

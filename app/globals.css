@@ -75,3 +75,11 @@ tr.open td { border-bottom-color: transparent; }
 .draft-actions .ghost.small { margin-top: 0; }
 a.link { text-decoration: none; display: inline-block; }
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tabs { display: flex; gap: 6px; margin: 4px 0 14px; border-bottom: 1px solid var(--line); }
+.tab { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 8px 14px; font: inherit; cursor: pointer; margin-bottom: -1px; }
+.tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.score-btn { background: transparent; border: 0; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; text-decoration: underline dotted; padding: 0; }
+.evidence { margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--accent-soft); font-size: 13px; border-radius: 0 6px 6px 0; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.breakdown { font-size: 14px; }
+.tag a { color: inherit; }

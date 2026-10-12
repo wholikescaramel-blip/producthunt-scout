@@ -1,5 +1,5 @@
 import { GENERIC_COMMENT_WEIGHT, WEIGHT_MAKER, WEIGHT_UPVOTES } from "./config";
-import type { ContactLinks, PHComment, PHPost } from "./types";
+import type { ContactLinks, EnrichInput, PHComment, PHPost } from "./types";
 
 const THANKS = /\b(thanks?|thank you|thx|ty|appreciate|cheers|welcome|glad you)\b/i;
 
@@ -27,25 +27,31 @@ function norm(value: number, max: number): number {
   return max <= 0 ? 0 : Math.log1p(value) / Math.log1p(max);
 }
 
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
 export interface ScoreRow {
   post: PHPost;
   makerComments: number;
-  makerResponsiveness: number;
+  weightedComments: number;
+  upvotePts: number; // out of 100 * WEIGHT_UPVOTES
+  makerPts: number; // out of 100 * WEIGHT_MAKER
   score: number;
 }
 
+/** score = upvote points + maker points, each = weight x (log-scaled value / cohort max). */
 export function scorePosts(posts: PHPost[]): ScoreRow[] {
   const rows = posts.map((post) => {
     const m = makerStats(post);
-    return { post, makerComments: m.count, makerResponsiveness: m.weighted };
+    return { post, makerComments: m.count, weightedComments: m.weighted };
   });
   const maxVotes = Math.max(0, ...rows.map((r) => r.post.votesCount));
-  const maxMaker = Math.max(0, ...rows.map((r) => r.makerResponsiveness));
+  const maxMaker = Math.max(0, ...rows.map((r) => r.weightedComments));
   return rows
-    .map((r) => ({
-      ...r,
-      score: Math.round(100 * (WEIGHT_UPVOTES * norm(r.post.votesCount, maxVotes) + WEIGHT_MAKER * norm(r.makerResponsiveness, maxMaker)) * 10) / 10,
-    }))
+    .map((r) => {
+      const upvotePts = round1(100 * WEIGHT_UPVOTES * norm(r.post.votesCount, maxVotes));
+      const makerPts = round1(100 * WEIGHT_MAKER * norm(r.weightedComments, maxMaker));
+      return { ...r, upvotePts, makerPts, score: round1(upvotePts + makerPts) };
+    })
     .sort((a, b) => b.score - a.score || b.post.votesCount - a.post.votesCount);
 }
 
@@ -69,5 +75,29 @@ export function contactLinks(post: PHPost): ContactLinks {
     makerProfileUrl: maker?.username ? `https://www.producthunt.com/@${maker.username}` : undefined,
     makerTwitterUrl: maker?.twitterUsername ? `https://x.com/${maker.twitterUsername}` : undefined,
     makerWebsiteUrl: maker?.websiteUrl || undefined,
+  };
+}
+
+const INTEGRATION_HINT = /integrat|slack|api|sync|connect|plugin|zapier|workflow|jira|notion|github|teams|calendar|standup|remote|team/i;
+
+/** The only text Gemini is allowed to quote as evidence: tagline, description, and a few real comments. */
+export function buildEnrichInput(post: PHPost): EnrichInput {
+  const clip = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 240);
+  const makerSnips = post.comments
+    .filter((c) => c.isMakerComment && c.body.trim().length >= 40)
+    .sort((a, b) => b.body.length - a.body.length)
+    .slice(0, 3)
+    .map((c) => ({ from: "maker comment" as const, text: clip(c.body) }));
+  const userSnips = post.comments
+    .filter((c) => !c.isMakerComment && c.body.trim().length >= 40 && (c.body.includes("?") || INTEGRATION_HINT.test(c.body)))
+    .slice(0, 3)
+    .map((c) => ({ from: "comment" as const, text: clip(c.body) }));
+  return {
+    id: post.id,
+    name: post.name,
+    tagline: post.tagline,
+    description: post.description.replace(/\s+/g, " ").trim().slice(0, 400),
+    topics: post.topics,
+    snippets: [...makerSnips, ...userSnips],
   };
 }

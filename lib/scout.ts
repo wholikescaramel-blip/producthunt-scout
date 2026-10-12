@@ -1,11 +1,11 @@
 import snapshotFile from "../data/snapshot.json";
-import { MAX_RESULTS } from "./config";
+import { INITIAL_ENRICH, MAX_RESULTS } from "./config";
 import { enrich } from "./gemini";
 import { fetchLaunches } from "./producthunt";
-import { contactLinks, daysSince, founderName, scorePosts } from "./scoring";
-import type { PHPost, ScoutRequest, ScoutResponse } from "./types";
+import { buildEnrichInput, contactLinks, daysSince, founderName, scorePosts } from "./scoring";
+import type { EnrichInput, PHPost, ScoutRequest, ScoutResponse } from "./types";
 
-const snapshot = snapshotFile as { savedAt: string | null; posts: PHPost[] };
+const snapshot = snapshotFile as unknown as { savedAt: string | null; posts: PHPost[] };
 
 export async function runScout(req: ScoutRequest): Promise<ScoutResponse> {
   const warnings: string[] = [];
@@ -33,11 +33,12 @@ export async function runScout(req: ScoutRequest): Promise<ScoutResponse> {
   if (inWindow.length === 0) warnings.push("No launches matched these categories in the selected window.");
 
   const ranked = scorePosts(inWindow).slice(0, MAX_RESULTS);
-  const { items, warning } = await enrich(
-    ranked.map((r) => r.post),
-    req.profile
-  );
+  const inputs = ranked.map((r) => buildEnrichInput(r.post));
+
+  // Angles are written up front for the first batch; the rest are requested on demand ("Show more").
+  const { items, warning } = await enrich(inputs.slice(0, INITIAL_ENRICH), req.profile);
   if (warning) warnings.push(warning);
+  const pending: Record<string, EnrichInput> = {};
 
   return {
     generatedAt: new Date().toISOString(),
@@ -47,22 +48,25 @@ export async function runScout(req: ScoutRequest): Promise<ScoutResponse> {
     topics: req.topics,
     totalFound: inWindow.length,
     warnings,
+    pending,
     products: ranked.map((r, i) => {
-      const e = items.get(r.post.id)!;
+      const e = items.get(r.post.id);
+      if (!e) pending[r.post.id] = inputs[i];
       return {
         rank: i + 1,
         id: r.post.id,
         name: r.post.name,
         url: r.post.url,
         founder: founderName(r.post),
-        oneLiner: e.oneLiner,
+        oneLiner: e?.oneLiner ?? r.post.tagline,
         upvotes: r.post.votesCount,
         daysSinceLaunch: daysSince(r.post.launchedAt, now),
         makerComments: r.makerComments,
-        makerResponsiveness: Math.round(r.makerResponsiveness * 10) / 10,
         score: r.score,
-        outreachAngle: e.angle,
-        angleSource: e.source,
+        breakdown: { upvotePts: r.upvotePts, makerPts: r.makerPts, weightedComments: Math.round(r.weightedComments * 10) / 10 },
+        outreachAngle: e?.angle ?? "",
+        evidence: e?.evidence,
+        angleSource: e ? e.source : "pending",
         tagline: r.post.tagline,
         contact: contactLinks(r.post),
       };

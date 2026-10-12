@@ -1,13 +1,25 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
-import { DEFAULT_PROFILE, DEFAULT_TOPICS, MAX_TOPICS, TOPICS } from "@/lib/config";
-import type { ScoredProduct, ScoutResponse } from "@/lib/types";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { DEFAULT_PROFILE, DEFAULT_TOPICS, INITIAL_SHOWN, MAX_TOPICS, SHOW_MORE_STEP, TOPICS } from "@/lib/config";
+import type { EnrichInput, Evidence, ScoredProduct, ScoutResponse } from "@/lib/types";
 
 type Topic = { slug: string; label: string };
 type Draft = { loading: boolean; message?: string; source?: "gemini" | "template"; error?: string; copied?: boolean };
+type AngleOverride = { oneLiner: string; angle: string; evidence?: Evidence; source: "gemini" | "template" | "failed" };
+type ContactedEntry = {
+  id: string;
+  name: string;
+  founder: string;
+  url: string;
+  upvotes: number;
+  xUrl?: string;
+  profileUrl?: string;
+  contactedAt: string;
+};
 
 const QUICK: Topic[] = TOPICS.map((t) => ({ slug: t.slug, label: t.label }));
+const STORE_KEY = "ph-scout-contacted-v1";
 
 function csvCell(v: string | number) {
   return `"${String(v).replace(/"/g, '""')}"`;
@@ -22,6 +34,14 @@ export default function Home() {
   const [data, setData] = useState<ScoutResponse | null>(null);
   const [profileUsed, setProfileUsed] = useState({ name: DEFAULT_PROFILE.name, description: DEFAULT_PROFILE.description });
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [openScores, setOpenScores] = useState<Record<string, boolean>>({});
+  const [overrides, setOverrides] = useState<Record<string, AngleOverride>>({});
+  const requested = useRef<Set<string>>(new Set());
+
+  const [view, setView] = useState<"list" | "contacted">("list");
+  const [shown, setShown] = useState(INITIAL_SHOWN);
+  const [contacted, setContacted] = useState<Record<string, ContactedEntry>>({});
+  const [hydrated, setHydrated] = useState(false);
 
   // category search
   const [query, setQuery] = useState("");
@@ -31,6 +51,25 @@ export default function Home() {
 
   const isSelected = (slug: string) => selected.some((t) => t.slug === slug);
   const chips = [...QUICK, ...selected.filter((t) => !QUICK.some((q) => q.slug === t.slug))];
+
+  // "Contacted" is remembered in this browser (survives refreshes and new searches).
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      if (raw) setContacted(JSON.parse(raw));
+    } catch {
+      /* storage unavailable: start empty */
+    }
+    setHydrated(true);
+  }, []);
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(contacted));
+    } catch {
+      /* ignore */
+    }
+  }, [contacted, hydrated]);
 
   function toggle(t: Topic) {
     setCapNote(false);
@@ -64,6 +103,11 @@ export default function Home() {
     setLoading(true);
     setError(null);
     setDrafts({});
+    setOpenScores({});
+    setOverrides({});
+    requested.current = new Set();
+    setShown(INITIAL_SHOWN);
+    setView("list");
     try {
       const res = await fetch("/api/scout", {
         method: "POST",
@@ -81,9 +125,76 @@ export default function Home() {
     }
   }
 
+  // Merge on-demand angles into the ranked list.
+  const products: ScoredProduct[] = (data?.products ?? []).map((p) => {
+    const o = overrides[p.id];
+    if (!o) return p;
+    if (o.source === "failed") return { ...p, angleSource: "template", outreachAngle: "Angle could not be generated right now - press Show more again or try later." };
+    return { ...p, oneLiner: o.oneLiner, outreachAngle: o.angle, evidence: o.evidence, angleSource: o.source };
+  });
+  const visible = products.filter((p) => !contacted[p.id]);
+  const shownList = visible.slice(0, shown);
+  const hiddenContacted = products.length - visible.length;
+
+  // Write angles for rows that are about to be shown but weren't generated up front.
+  const needIds = shownList.filter((p) => p.angleSource === "pending" && !requested.current.has(p.id)).map((p) => p.id);
+  const needKey = needIds.join(",");
+  useEffect(() => {
+    if (!data || !needKey) return;
+    const ids = needKey.split(",").slice(0, 10);
+    ids.forEach((id) => requested.current.add(id));
+    const items: EnrichInput[] = ids.map((id) => data.pending[id]).filter(Boolean);
+    (async () => {
+      try {
+        const res = await fetch("/api/enrich", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ profile: profileUsed, items }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error);
+        setOverrides((o) => {
+          const next = { ...o };
+          for (const id of ids) {
+            const it = json.items?.[id];
+            next[id] = it ? { oneLiner: it.oneLiner, angle: it.angle, evidence: it.evidence, source: it.source } : { oneLiner: "", angle: "", source: "failed" };
+          }
+          return next;
+        });
+      } catch {
+        setOverrides((o) => {
+          const next = { ...o };
+          for (const id of ids) next[id] = { oneLiner: "", angle: "", source: "failed" };
+          return next;
+        });
+      }
+    })();
+  }, [needKey, data, profileUsed]);
+
+  function markContacted(p: ScoredProduct) {
+    setContacted((c) => ({
+      ...c,
+      [p.id]: {
+        id: p.id,
+        name: p.name,
+        founder: p.founder,
+        url: p.url,
+        upvotes: p.upvotes,
+        xUrl: p.contact.makerTwitterUrl,
+        profileUrl: p.contact.makerProfileUrl,
+        contactedAt: new Date().toISOString(),
+      },
+    }));
+  }
+  function undoContacted(id: string) {
+    setContacted((c) => {
+      const { [id]: _gone, ...rest } = c;
+      return rest;
+    });
+  }
+
   async function makeDraft(p: ScoredProduct) {
     if (drafts[p.id]?.message) {
-      // toggle closed
       setDrafts((d) => {
         const { [p.id]: _gone, ...rest } = d;
         return rest;
@@ -119,9 +230,8 @@ export default function Home() {
   }
 
   function downloadCsv() {
-    if (!data) return;
     const head = ["Rank", "Product", "Founder", "Description", "Upvotes", "Days since launch", "Maker comments", "Score", "Outreach angle", "URL"];
-    const rows = data.products.map((p) => [p.rank, p.name, p.founder, p.oneLiner, p.upvotes, p.daysSinceLaunch, p.makerComments, p.score, p.outreachAngle, p.url]);
+    const rows = visible.map((p) => [p.rank, p.name, p.founder, p.oneLiner, p.upvotes, p.daysSinceLaunch, p.makerComments, p.score, p.outreachAngle, p.url]);
     const csv = [head, ...rows].map((r) => r.map(csvCell).join(",")).join("\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -130,6 +240,7 @@ export default function Home() {
   }
 
   const searchHits = hits.filter((h) => !isSelected(h.slug));
+  const contactedList = Object.values(contacted).sort((a, b) => b.contactedAt.localeCompare(a.contactedAt));
 
   return (
     <main>
@@ -199,86 +310,184 @@ export default function Home() {
 
       {error && <div className="banner err" role="alert">{error}</div>}
 
-      {data && (
+      {(data || contactedList.length > 0) && (
+        <div className="tabs" role="tablist">
+          <button role="tab" aria-selected={view === "list"} className="tab" onClick={() => setView("list")}>Outreach list</button>
+          <button role="tab" aria-selected={view === "contacted"} className="tab" onClick={() => setView("contacted")}>
+            Contacted ({contactedList.length})
+          </button>
+        </div>
+      )}
+
+      {view === "contacted" && (
+        <section>
+          {contactedList.length === 0 ? (
+            <div className="panel empty">Nobody marked as contacted yet. Use &ldquo;Mark contacted&rdquo; on a row and they&apos;ll show up here (and stay out of your list).</div>
+          ) : (
+            <div className="table-wrap">
+              <table style={{ minWidth: 640 }}>
+                <thead>
+                  <tr><th>Product</th><th>Founder</th><th>Upvotes</th><th>Contacted on</th><th /></tr>
+                </thead>
+                <tbody>
+                  {contactedList.map((c) => (
+                    <tr key={c.id}>
+                      <td className="name"><a href={c.url} target="_blank" rel="noreferrer">{c.name}</a></td>
+                      <td>
+                        {c.founder}
+                        <div className="tag">
+                          {c.profileUrl && <a href={c.profileUrl} target="_blank" rel="noreferrer">PH profile</a>}
+                          {c.profileUrl && c.xUrl && " · "}
+                          {c.xUrl && <a href={c.xUrl} target="_blank" rel="noreferrer">X</a>}
+                        </div>
+                      </td>
+                      <td className="num">{c.upvotes}</td>
+                      <td className="num">{new Date(c.contactedAt).toLocaleDateString()}</td>
+                      <td><button className="ghost small" style={{ marginTop: 0 }} onClick={() => undoContacted(c.id)}>Undo</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="tag" style={{ marginTop: 8 }}>Saved in this browser only, so it persists across refreshes and new searches.</p>
+        </section>
+      )}
+
+      {view === "list" && data && (
         <section>
           {data.warnings.map((w, i) => (
             <div key={i} className="banner warn">{w}</div>
           ))}
           <div className="actions">
             <p className="meta" style={{ margin: 0 }}>
-              {data.products.length} of {data.totalFound} launches shown · {data.source === "live" ? "live Product Hunt data" : "saved snapshot"} · generated {new Date(data.generatedAt).toLocaleString()}
+              Showing {shownList.length} of {visible.length} ranked launches
+              {hiddenContacted > 0 && ` (${hiddenContacted} contacted hidden)`} · {data.source === "live" ? "live Product Hunt data" : "saved snapshot"} · generated {new Date(data.generatedAt).toLocaleString()}
             </p>
-            {data.products.length > 0 && <button className="ghost" onClick={downloadCsv}>Download CSV</button>}
+            {visible.length > 0 && <button className="ghost" onClick={downloadCsv}>Download CSV</button>}
           </div>
-          {data.products.length === 0 ? (
-            <div className="panel empty">No launches found for these categories in the last 7 days. Try different or additional categories.</div>
+          {visible.length === 0 ? (
+            <div className="panel empty">
+              {products.length > 0
+                ? "Everyone in this list is marked as contacted. Try different categories."
+                : "No launches found for these categories in the last 7 days. Try different or additional categories."}
+            </div>
           ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>#</th><th>Product</th><th>Founder</th><th>Upvotes</th><th>Days since launch</th><th>Maker comments</th><th>Score</th><th>Suggested outreach angle</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.products.map((p) => {
-                    const d = drafts[p.id];
-                    const c = p.contact;
-                    return (
-                      <Fragment key={p.id}>
-                        <tr className={d ? "open" : undefined}>
-                          <td className="num">{p.rank}</td>
-                          <td className="name">
-                            <a href={p.url} target="_blank" rel="noreferrer">{p.name}</a>
-                            <div className="desc">{p.oneLiner}</div>
-                          </td>
-                          <td>{p.founder}</td>
-                          <td className="num">{p.upvotes}</td>
-                          <td className="num">{p.daysSinceLaunch === 0 ? "today" : `${p.daysSinceLaunch}d`}</td>
-                          <td className="num">{p.makerComments}</td>
-                          <td className="num score">{p.score}</td>
-                          <td>
-                            {p.outreachAngle}
-                            <div className="tag">{p.angleSource === "gemini" ? "Gemini" : "template"}</div>
-                            <button className="ghost small" onClick={() => makeDraft(p)} disabled={d?.loading}>
-                              {d?.loading ? "Drafting…" : d?.message ? "Hide draft" : "Draft message"}
-                            </button>
-                          </td>
-                        </tr>
-                        {d && !d.loading && (
-                          <tr className="draft-row">
-                            <td />
-                            <td colSpan={7}>
-                              {d.error ? (
-                                <div className="banner err">{d.error}</div>
+            <>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>#</th><th>Product</th><th>Founder</th><th>Upvotes</th><th>Days since launch</th><th>Maker comments</th><th>Score</th><th>Suggested outreach angle</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shownList.map((p, idx) => {
+                      const d = drafts[p.id];
+                      const c = p.contact;
+                      const b = p.breakdown;
+                      const sOpen = !!openScores[p.id];
+                      return (
+                        <Fragment key={p.id}>
+                          <tr className={d || sOpen ? "open" : undefined}>
+                            <td className="num">{idx + 1}</td>
+                            <td className="name">
+                              <a href={p.url} target="_blank" rel="noreferrer">{p.name}</a>
+                              <div className="desc">{p.oneLiner}</div>
+                            </td>
+                            <td>{p.founder}</td>
+                            <td className="num">{p.upvotes}</td>
+                            <td className="num">{p.daysSinceLaunch === 0 ? "today" : `${p.daysSinceLaunch}d`}</td>
+                            <td className="num">{p.makerComments}</td>
+                            <td className="num">
+                              <button
+                                className="score-btn"
+                                aria-expanded={sOpen}
+                                title="See how this score is made"
+                                onClick={() => setOpenScores((s) => ({ ...s, [p.id]: !s[p.id] }))}
+                              >
+                                {p.score}
+                              </button>
+                            </td>
+                            <td>
+                              {p.angleSource === "pending" ? (
+                                <span className="tag">Writing angle…</span>
                               ) : (
-                                <div className="draft">
-                                  <textarea
-                                    value={d.message}
-                                    onChange={(e) => setDrafts((all) => ({ ...all, [p.id]: { ...all[p.id], message: e.target.value } }))}
-                                    aria-label={`Draft message to ${p.name}`}
-                                  />
-                                  <div className="draft-actions">
-                                    <button className="go small" onClick={() => copy(p.id, d.message ?? "")}>{d.copied ? "Copied ✓" : "Copy message"}</button>
-                                    <a className="ghost small link" href={c.productHuntUrl} target="_blank" rel="noreferrer">Open on Product Hunt</a>
-                                    {c.makerProfileUrl && <a className="ghost small link" href={c.makerProfileUrl} target="_blank" rel="noreferrer">Maker profile</a>}
-                                    {c.makerTwitterUrl && <a className="ghost small link" href={c.makerTwitterUrl} target="_blank" rel="noreferrer">Maker on X</a>}
-                                    {(c.makerWebsiteUrl || c.productWebsite) && (
-                                      <a className="ghost small link" href={c.makerWebsiteUrl || c.productWebsite} target="_blank" rel="noreferrer">Website</a>
-                                    )}
-                                    <span className="tag">{d.source === "gemini" ? "Written by Gemini" : "Template draft"} · Product Hunt doesn&apos;t share emails, so paste this wherever you reach them.</span>
-                                  </div>
-                                </div>
+                                <>
+                                  {p.outreachAngle}
+                                  {p.evidence && (
+                                    <div className="evidence">
+                                      &ldquo;{p.evidence.quote}&rdquo; <span className="tag">- from their {p.evidence.from}</span>
+                                    </div>
+                                  )}
+                                  <div className="tag">{p.angleSource === "gemini" ? "Gemini" : "template"}</div>
+                                </>
                               )}
+                              <div className="btn-row">
+                                <button className="ghost small" onClick={() => makeDraft(p)} disabled={d?.loading || p.angleSource === "pending"}>
+                                  {d?.loading ? "Drafting…" : d?.message ? "Hide draft" : "Draft message"}
+                                </button>
+                                <button className="ghost small" onClick={() => markContacted(p)}>Mark contacted</button>
+                              </div>
                             </td>
                           </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          {sOpen && (
+                            <tr className="draft-row">
+                              <td />
+                              <td colSpan={7}>
+                                <div className="breakdown">
+                                  <strong>Score {p.score}</strong> = upvotes <strong>{b.upvotePts}</strong> / 60 + maker responsiveness <strong>{b.makerPts}</strong> / 40
+                                  <div className="tag">
+                                    Upvotes: {p.upvotes}. Maker comments: {p.makerComments}
+                                    {p.makerComments > 0 ? ` (${b.weightedComments} weighted; short thank-yous count 0.3)` : " (none found in the latest 40 comments, so 0 points)"}.
+                                    Each part is scaled against the top launch in this list.
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                          {d && !d.loading && (
+                            <tr className="draft-row">
+                              <td />
+                              <td colSpan={7}>
+                                {d.error ? (
+                                  <div className="banner err">{d.error}</div>
+                                ) : (
+                                  <div className="draft">
+                                    <textarea
+                                      value={d.message}
+                                      onChange={(e) => setDrafts((all) => ({ ...all, [p.id]: { ...all[p.id], message: e.target.value } }))}
+                                      aria-label={`Draft message to ${p.name}`}
+                                    />
+                                    <div className="draft-actions">
+                                      <button className="go small" onClick={() => copy(p.id, d.message ?? "")}>{d.copied ? "Copied ✓" : "Copy message"}</button>
+                                      <a className="ghost small link" href={c.productHuntUrl} target="_blank" rel="noreferrer">Open on Product Hunt</a>
+                                      {c.makerProfileUrl && <a className="ghost small link" href={c.makerProfileUrl} target="_blank" rel="noreferrer">Maker profile</a>}
+                                      {c.makerTwitterUrl && <a className="ghost small link" href={c.makerTwitterUrl} target="_blank" rel="noreferrer">X</a>}
+                                      {(c.makerWebsiteUrl || c.productWebsite) && (
+                                        <a className="ghost small link" href={c.makerWebsiteUrl || c.productWebsite} target="_blank" rel="noreferrer">Website</a>
+                                      )}
+                                      <span className="tag">{d.source === "gemini" ? "Written by Gemini" : "Template draft"} · Product Hunt doesn&apos;t share emails, so paste this wherever you reach them.</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {visible.length > shown && (
+                <div style={{ textAlign: "center", marginTop: 14 }}>
+                  <button className="ghost" onClick={() => setShown((n) => n + SHOW_MORE_STEP)}>
+                    Show {Math.min(SHOW_MORE_STEP, visible.length - shown)} more
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </section>
       )}
@@ -287,8 +496,9 @@ export default function Home() {
         <summary>How the score works</summary>
         <p>
           Score (0-100) = 60% upvotes + 40% maker responsiveness, each log-scaled against the highest in the current list. Maker responsiveness is the number of
-          comments written by the product&apos;s makers; short thank-you replies still count, at 0.3 of a full comment. Days since launch is measured from the
-          featured date. Data comes from the Product Hunt API; outreach angles and drafts are written by Gemini Flash.
+          comments written by the product&apos;s makers (latest 40 comments); short thank-you replies still count, at 0.3 of a full comment. A launch with no maker
+          comments is never removed, it just earns 0 of the 40 maker points. Click any score to see its breakdown. Outreach angles quote the product&apos;s own text
+          only when the quote can be found word-for-word in it; otherwise a plain angle is shown. Data comes from the Product Hunt API; angles and drafts are written by Gemini Flash.
         </p>
       </details>
     </main>

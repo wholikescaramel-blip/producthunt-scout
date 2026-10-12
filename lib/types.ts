@@ -9,8 +9,6 @@ export interface PHMaker {
 export interface PHComment {
   id: string;
   body: string;
-  createdAt: string;
-  parentId: string | null;
   userId: string;
   isMakerComment: boolean;
 }
@@ -40,6 +38,27 @@ export interface ContactLinks {
   makerWebsiteUrl?: string;
 }
 
+/** Text Gemini may use (and the server later verifies quotes against). */
+export interface EnrichInput {
+  id: string;
+  name: string;
+  tagline: string;
+  description: string;
+  topics: string[];
+  snippets: { from: "maker comment" | "comment"; text: string }[];
+}
+
+export interface Evidence {
+  quote: string;
+  from: string; // tagline | description | maker comment | comment
+}
+
+export interface ScoreBreakdown {
+  upvotePts: number; // out of 60
+  makerPts: number; // out of 40
+  weightedComments: number;
+}
+
 export interface ScoredProduct {
   rank: number;
   id: string;
@@ -49,11 +68,12 @@ export interface ScoredProduct {
   oneLiner: string;
   upvotes: number;
   daysSinceLaunch: number;
-  makerComments: number; // raw count
-  makerResponsiveness: number; // weighted count (generic replies weigh less)
+  makerComments: number; // raw count of maker comments
   score: number; // 0-100
+  breakdown: ScoreBreakdown;
   outreachAngle: string;
-  angleSource: "gemini" | "template";
+  evidence?: Evidence;
+  angleSource: "gemini" | "template" | "pending";
   tagline: string;
   contact: ContactLinks;
 }
@@ -72,5 +92,7 @@ export interface ScoutResponse {
   topics: string[];
   totalFound: number;
   products: ScoredProduct[];
+  /** Inputs for products whose angle isn't written yet (ranks beyond the first batch); the client requests them on demand. */
+  pending: Record<string, EnrichInput>;
   warnings: string[];
 }

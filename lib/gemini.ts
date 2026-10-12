@@ -1,10 +1,12 @@
-import type { PHPost } from "./types";
+import type { EnrichInput, Evidence } from "./types";
 
 export interface Enrichment {
   id: string;
   oneLiner: string;
   angle: string;
+  evidence?: Evidence;
 }
+export type EnrichedItem = Enrichment & { source: "gemini" | "template" };
 
 // Flash models, fastest-to-respond first. The first group is raced in parallel (first success wins),
 // so one overloaded model (503) or slow model doesn't stall the request; the rest are sequential backups.
@@ -46,7 +48,7 @@ export async function callGemini(key: string, prompt: string): Promise<string> {
   throw new Error(`${lastErr} (all Gemini models failed or time budget used up)`);
 }
 
-function templateEnrichment(p: PHPost, profileName: string): Enrichment {
+function templateEnrichment(p: EnrichInput, profileName: string): Enrichment {
   return {
     id: p.id,
     oneLiner: p.tagline,
@@ -54,68 +56,104 @@ function templateEnrichment(p: PHPost, profileName: string): Enrichment {
   };
 }
 
-type Items = Map<string, Enrichment & { source: "gemini" | "template" }>;
+const flat = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[‘’“”"'`]/g, "")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/**
+ * Hallucination guard: a quote is accepted only if it appears verbatim (ignoring case/punctuation)
+ * in the product's real text that we supplied. The source label comes from where WE found it, not from Gemini.
+ */
+export function verifyEvidence(input: EnrichInput, quote: unknown): Evidence | undefined {
+  if (typeof quote !== "string") return undefined;
+  const q = flat(quote);
+  if (q.length < 15 || q.split(" ").length < 4) return undefined;
+  const sources: { from: string; text: string }[] = [
+    { from: "tagline", text: input.tagline },
+    { from: "description", text: input.description },
+    ...input.snippets,
+  ];
+  const hit = sources.find((s) => flat(s.text).includes(q));
+  if (!hit) return undefined;
+  const words = quote.trim().replace(/^["“]|["”]$/g, "").split(/\s+/);
+  return { quote: words.length > 28 ? `${words.slice(0, 25).join(" ")}…` : words.join(" "), from: hit.from };
+}
+
+type Items = Map<string, EnrichedItem>;
 const BATCH_SIZE = 5;
 
 /** Products are enriched in small parallel batches: each call is faster, and one slow batch can't sink the whole list. */
 export async function enrich(
-  posts: PHPost[],
+  inputs: EnrichInput[],
   profile: { name: string; description: string }
 ): Promise<{ items: Items; warning?: string }> {
-  const batches: PHPost[][] = [];
-  for (let i = 0; i < posts.length; i += BATCH_SIZE) batches.push(posts.slice(i, i + BATCH_SIZE));
+  const batches: EnrichInput[][] = [];
+  for (let i = 0; i < inputs.length; i += BATCH_SIZE) batches.push(inputs.slice(i, i + BATCH_SIZE));
   const results = await Promise.all(batches.map((b) => enrichBatch(b, profile)));
   const items: Items = new Map();
   for (const r of results) for (const [k, v] of r.items) items.set(k, v);
   const fellBack = [...items.values()].filter((v) => v.source === "template").length;
   const detail = results.find((r) => r.warning)?.warning;
-  return { items, warning: fellBack ? `Template angles used for ${fellBack} of ${posts.length} products. ${detail ?? ""}`.trim() : undefined };
+  return { items, warning: fellBack ? `Template angles used for ${fellBack} of ${inputs.length} products. ${detail ?? ""}`.trim() : undefined };
+}
+
+interface RawEnrichment {
+  id?: unknown;
+  oneLiner?: unknown;
+  basicAngle?: unknown;
+  groundedAngle?: unknown;
+  evidenceQuote?: unknown;
 }
 
 /** One Gemini call for one batch. Any failure falls back to a template so the list still ships. */
-async function enrichBatch(
-  posts: PHPost[],
-  profile: { name: string; description: string }
-): Promise<{ items: Items; warning?: string }> {
-  const items = new Map<string, Enrichment & { source: "gemini" | "template" }>();
+async function enrichBatch(inputs: EnrichInput[], profile: { name: string; description: string }): Promise<{ items: Items; warning?: string }> {
+  const items: Items = new Map();
   const fallback = (warning?: string) => {
-    for (const p of posts) items.set(p.id, { ...templateEnrichment(p, profile.name), source: "template" });
+    for (const p of inputs) items.set(p.id, { ...templateEnrichment(p, profile.name), source: "template" });
     return { items, warning };
   };
 
   const key = process.env.GEMINI_API_KEY;
   if (!key) return fallback("GEMINI_API_KEY is not set - using template outreach angles.");
-  if (posts.length === 0) return { items };
-
-  const products = posts.map((p) => ({
-    id: p.id,
-    name: p.name,
-    tagline: p.tagline,
-    description: p.description.slice(0, 400),
-    topics: p.topics,
-  }));
+  if (inputs.length === 0) return { items };
 
   const prompt = `You help a partnerships lead at this company:
 "${profile.description}"
 
 For each newly launched product below, return:
-- "oneLiner": one plain-English sentence (max 18 words) saying what the product does.
-- "angle": a specific outreach angle (max 30 words) for how OUR product could complement THEIRS (integration, co-marketing, bundle, referral). Be concrete, reference what the product actually does. If it is a direct competitor, say so and suggest a different angle.
+- "oneLiner": one plain-English sentence (max 18 words) saying what the product does. Use only the given text.
+- "basicAngle": a specific outreach angle (max 30 words) for how OUR product could complement THEIRS (integration, co-marketing, bundle, referral). Base it only on the product's tagline/description. If it is a direct competitor, say so and suggest a different angle.
+- "evidenceQuote": OPTIONAL. If one of the product's own texts (tagline, description or a comment in "snippets") contains something that makes the partnership concrete (an integration they mention, a user asking for one, a stated customer type, a roadmap item), copy that phrase EXACTLY, word for word, max 25 words. Never paraphrase or invent. If nothing relevant exists, omit it.
+- "groundedAngle": OPTIONAL, only if you gave evidenceQuote. An outreach angle (max 30 words) that builds directly on that quote.
 
 Products:
-${JSON.stringify(products)}
+${JSON.stringify(inputs)}
 
-Respond with ONLY a JSON array: [{"id": "...", "oneLiner": "...", "angle": "..."}] with one entry per product id.`;
+Respond with ONLY a JSON array: [{"id": "...", "oneLiner": "...", "basicAngle": "...", "evidenceQuote": "...", "groundedAngle": "..."}] with one entry per product id.`;
 
   try {
-    const text = await callGemini(key, prompt);
-    const parsed = JSON.parse(text) as Enrichment[];
+    const parsed = JSON.parse(await callGemini(key, prompt)) as RawEnrichment[];
     if (!Array.isArray(parsed)) throw new Error("Gemini returned non-array JSON");
+    const byId = new Map(inputs.map((p) => [p.id, p]));
     for (const e of parsed) {
-      if (e && typeof e.id === "string" && e.angle && e.oneLiner) items.set(String(e.id), { ...e, source: "gemini" });
+      const input = typeof e?.id === "string" || typeof e?.id === "number" ? byId.get(String(e.id)) : undefined;
+      if (!input || typeof e.oneLiner !== "string" || typeof e.basicAngle !== "string" || !e.oneLiner || !e.basicAngle) continue;
+      const evidence = typeof e.groundedAngle === "string" && e.groundedAngle ? verifyEvidence(input, e.evidenceQuote) : undefined;
+      items.set(input.id, {
+        id: input.id,
+        oneLiner: e.oneLiner,
+        // verified evidence -> grounded angle; otherwise the plain angle (no unverifiable claims shown)
+        angle: evidence ? (e.groundedAngle as string) : e.basicAngle,
+        evidence,
+        source: "gemini",
+      });
     }
     let missing = 0;
-    for (const p of posts) {
+    for (const p of inputs) {
       if (!items.has(p.id)) {
         missing++;
         items.set(p.id, { ...templateEnrichment(p, profile.name), source: "template" });
