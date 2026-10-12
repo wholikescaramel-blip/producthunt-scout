@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { verifyEvidence } from "../lib/gemini";
-import { makerCommentWeight, scorePosts } from "../lib/scoring";
-import type { EnrichInput, PHPost } from "../lib/types";
+import { parseFit, verifyEvidence } from "../lib/gemini";
+import { applyFit, makerCommentWeight, scorePosts } from "../lib/scoring";
+import type { EnrichInput, FitResult, PHPost } from "../lib/types";
 
 const mk = (id: string, votes: number, makerBodies: string[]): PHPost => ({
   id, name: id, tagline: "", description: "", url: "", votesCount: votes, commentsCount: makerBodies.length,
@@ -53,4 +53,30 @@ assert.equal(verifyEvidence(input, "Does it work with Microsoft Teams?")?.from, 
 assert.equal(verifyEvidence(input, "integrates natively with Notion and Linear"), undefined); // invented -> rejected
 assert.equal(verifyEvidence(input, "Slack"), undefined); // too short to count as evidence
 assert.equal(verifyEvidence(input, undefined), undefined);
-console.log("scoring + evidence tests passed");
+// fit tiers: poor never ranks (even with the top score); good beats maybe at equal traction; unrated = maybe
+const A = mk("popular-competitor", 800, ["We reply to everyone here, ask us anything about pricing."]);
+const B = mk("great-fit", 150, ["We reply to everyone here, ask us anything about pricing."]);
+const C = mk("so-so", 150, ["We reply to everyone here, ask us anything about pricing."]);
+const D = mk("unrated", 150, ["We reply to everyone here, ask us anything about pricing."]);
+const rows = scorePosts([A, B, C, D]);
+const fits = new Map<string, FitResult>([["popular-competitor", { fit: "poor", reason: "Direct competitor" }], ["great-fit", { fit: "good" }], ["so-so", { fit: "maybe" }]]);
+const { ranked, lowFit } = applyFit(rows, fits);
+assert.deepEqual(lowFit.map((x) => x.post.id), ["popular-competitor"]);
+assert.ok(!ranked.some((x) => x.post.id === "popular-competitor"));
+assert.equal(lowFit[0].fitReason, "Direct competitor");
+const g = ranked.find((x) => x.post.id === "great-fit")!, m = ranked.find((x) => x.post.id === "so-so")!, u = ranked.find((x) => x.post.id === "unrated")!;
+assert.equal(g.finalScore, g.baseScore); // good = x1.0
+assert.ok(Math.abs(m.finalScore - m.baseScore * 0.85) < 0.06); // maybe = x0.85
+assert.ok(g.finalScore > m.finalScore); // equal traction: good ranks above maybe
+assert.equal(u.fit, "maybe");
+assert.equal(u.fitRated, false); // Gemini did not rate it -> treated as maybe, not hidden
+assert.equal(ranked[0].post.id, "great-fit");
+
+// fit parsing is strict: bad values are dropped (and later treated as maybe)
+assert.deepEqual(parseFit({ id: 7, fit: "GOOD", reason: "  Same team buyers " }), { id: "7", result: { fit: "good", reason: "Same team buyers" } });
+assert.equal(parseFit({ id: "1", fit: "excellent" }), undefined);
+assert.equal(parseFit({ fit: "good" }), undefined);
+assert.equal(parseFit(null), undefined);
+assert.equal(parseFit({ id: "1", fit: "poor", reason: "x".repeat(300) })!.result.reason!.length, 110);
+
+console.log("scoring + fit + evidence tests passed");

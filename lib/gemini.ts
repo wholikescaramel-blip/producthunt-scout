@@ -1,4 +1,5 @@
-import type { EnrichInput, Evidence } from "./types";
+import { FIT_BATCH } from "./config";
+import type { EnrichInput, Evidence, Fit, FitInput, FitResult } from "./types";
 
 export interface Enrichment {
   id: string;
@@ -31,8 +32,8 @@ async function callModel(model: string, key: string, prompt: string, timeoutMs: 
   return text;
 }
 
-export async function callGemini(key: string, prompt: string): Promise<string> {
-  const deadline = Date.now() + BUDGET_MS;
+export async function callGemini(key: string, prompt: string, budgetMs = BUDGET_MS): Promise<string> {
+  const deadline = Date.now() + budgetMs;
   let lastErr = "no model tried";
   const groups = [PRIMARY, ...BACKUP.map((m) => [m])];
   for (const group of groups) {
@@ -196,4 +197,74 @@ Congratulate them briefly, make the angle concrete, end with one low-pressure as
   } catch (err) {
     return { message: templateDraft(input), source: "template", warning: `Gemini failed (${(err as Error).message}) - template draft used.` };
   }
+}
+
+const FIT_VALUES: Fit[] = ["good", "maybe", "poor"];
+
+/** Strict parse of one Gemini fit entry; anything unexpected is dropped (caller treats it as unrated = maybe). */
+export function parseFit(raw: unknown): { id: string; result: FitResult } | undefined {
+  const e = raw as { id?: unknown; fit?: unknown; reason?: unknown } | null;
+  if (!e || (typeof e.id !== "string" && typeof e.id !== "number")) return undefined;
+  const fit = typeof e.fit === "string" ? (e.fit.trim().toLowerCase() as Fit) : undefined;
+  if (!fit || !FIT_VALUES.includes(fit)) return undefined;
+  const reason = typeof e.reason === "string" ? e.reason.replace(/\s+/g, " ").trim().slice(0, 110) : undefined;
+  return { id: String(e.id), result: { fit, reason: reason || undefined } };
+}
+
+/**
+ * Rate how well each launch fits our product (audience overlap + complementary, not competing).
+ * Popularity and responsiveness are deliberately NOT inputs - those are scored separately.
+ */
+export async function rateFit(
+  inputs: FitInput[],
+  profile: { name: string; description: string }
+): Promise<{ fits: Map<string, FitResult>; warning?: string }> {
+  const fits = new Map<string, FitResult>();
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return { fits, warning: "GEMINI_API_KEY is not set - fit could not be judged, every launch is treated as a maybe." };
+  if (inputs.length === 0) return { fits };
+
+  const batches: FitInput[][] = [];
+  for (let i = 0; i < inputs.length; i += FIT_BATCH) batches.push(inputs.slice(i, i + FIT_BATCH));
+
+  const results = await Promise.allSettled(
+    batches.map(async (batch) => {
+      const prompt = `You are a partnerships analyst for this company:
+"${profile.description}"
+
+A good partner passes these tests: (1) SAME CUSTOMER - their users are also plausible users of our product; (2) NOT A COMPETITOR - they solve a different problem, so each side can recommend the other; (3) a natural reason to connect (an integration, shared workflow, or co-marketing story).
+
+Rate each newly launched product. Use all three ratings; "good" should be the minority (roughly 1 in 5).
+- "good": used by remote, product, engineering or HR teams in their daily workflow AND there is an obvious tie to team updates: task or project tracking, team chat or meetings, developer workflow, HR check-ins. We could name the integration or co-marketing story in one sentence.
+- "maybe": a tool teams might use, but the tie to team updates is indirect (for example media, design, finance, sales, or general AI utilities), or you cannot tell. Developer and agent tooling used by engineering teams is usually "maybe" unless it clearly touches team workflow.
+- "poor": clearly aimed at a different customer (consumers, hobbyists, solo creators or solopreneurs when we sell to teams), OR a direct competitor of ours.
+Judge only from what the product IS (name, tagline, description, categories). Be fair: use "maybe" when unsure; reserve "poor" for clear mismatches.
+Give a "reason" of at most 12 words.
+
+Products:
+${JSON.stringify(batch)}
+
+Respond with ONLY a JSON array: [{"id": "...", "fit": "good|maybe|poor", "reason": "..."}] with one entry per product id.`;
+      const parsed = JSON.parse(await callGemini(key, prompt, 15_000));
+      if (!Array.isArray(parsed)) throw new Error("not an array");
+      return parsed;
+    })
+  );
+
+  let failed = 0;
+  for (const r of results) {
+    if (r.status === "rejected") {
+      failed++;
+      continue;
+    }
+    for (const raw of r.value) {
+      const p = parseFit(raw);
+      if (p) fits.set(p.id, p.result);
+    }
+  }
+  const unrated = inputs.filter((i) => !fits.has(i.id)).length;
+  return {
+    fits,
+    warning: unrated ? `Fit could not be judged for ${unrated} of ${inputs.length} launches (Gemini busy); those are treated as a maybe.` : undefined,
+  };
 }

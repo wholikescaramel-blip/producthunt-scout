@@ -60,6 +60,22 @@ export interface ScoreBreakdown {
   weightedComments: number;
 }
 
+export type Fit = "good" | "maybe" | "poor";
+
+export interface FitResult {
+  fit: Fit;
+  reason?: string;
+}
+
+/** What Gemini reads to judge fit (no popularity numbers). */
+export interface FitInput {
+  id: string;
+  name: string;
+  tagline: string;
+  description: string;
+  topics: string[];
+}
+
 export interface ScoredProduct {
   rank: number;
   id: string;
@@ -70,7 +86,12 @@ export interface ScoredProduct {
   upvotes: number;
   daysSinceLaunch: number;
   makerComments: number; // raw count of maker comments
-  score: number; // 0-100
+  score: number; // final: base score x fit factor
+  baseScore: number; // 55/30/15 score before fit
+  fit: Fit;
+  fitRated: boolean; // false when Gemini could not rate it (treated as maybe)
+  fitReason?: string;
+  fitFactor: number;
   breakdown: ScoreBreakdown;
   outreachAngle: string;
   evidence?: Evidence;
@@ -93,6 +114,8 @@ export interface ScoutResponse {
   topics: string[];
   totalFound: number;
   products: ScoredProduct[];
+  /** Launches judged a poor fit; kept out of the main ranking, shown behind a toggle. */
+  lowFit: ScoredProduct[];
   /** Inputs for products whose angle isn't written yet (ranks beyond the first batch); the client requests them on demand. */
   pending: Record<string, EnrichInput>;
   warnings: string[];

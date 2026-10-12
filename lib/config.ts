@@ -34,5 +34,8 @@ export const INITIAL_ENRICH = 20; // products that get Gemini angles up front
 export const WEIGHT_UPVOTES = 0.55;
 export const WEIGHT_MAKER = 0.3;
 export const WEIGHT_RECENCY = 0.15;
+// Fit judgement (Gemini): good and maybe launches are ranked by score x factor; poor launches go behind a toggle.
+export const FIT_FACTOR = { good: 1, maybe: 0.85, poor: 0 } as const;
+export const FIT_BATCH = 20; // launches rated per Gemini call
 // A maker comment that is just a thank-you / generic reply still counts, at this weight.
 export const GENERIC_COMMENT_WEIGHT = 0.3;

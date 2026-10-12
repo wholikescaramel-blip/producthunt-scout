@@ -1,5 +1,5 @@
-import { GENERIC_COMMENT_WEIGHT, WEIGHT_MAKER, WEIGHT_RECENCY, WEIGHT_UPVOTES, WINDOW_DAYS } from "./config";
-import type { ContactLinks, EnrichInput, PHComment, PHPost } from "./types";
+import { FIT_FACTOR, GENERIC_COMMENT_WEIGHT, WEIGHT_MAKER, WEIGHT_RECENCY, WEIGHT_UPVOTES, WINDOW_DAYS } from "./config";
+import type { ContactLinks, EnrichInput, Fit, FitInput, FitResult, PHComment, PHPost } from "./types";
 
 const THANKS = /\b(thanks?|thank you|thx|ty|appreciate|cheers|welcome|glad you)\b/i;
 
@@ -107,5 +107,42 @@ export function buildEnrichInput(post: PHPost): EnrichInput {
     description: post.description.replace(/\s+/g, " ").trim().slice(0, 400),
     topics: post.topics,
     snippets: [...makerSnips, ...userSnips],
+  };
+}
+
+export interface FitRow extends ScoreRow {
+  fit: Fit;
+  fitReason?: string;
+  fitRated: boolean;
+  fitFactor: number;
+  baseScore: number;
+  finalScore: number;
+}
+
+/**
+ * Combine traction score with Gemini's fit judgement.
+ * good/maybe: final = score x factor (1.0 / 0.85), ranked together. poor: kept out of the ranking (shown behind a toggle).
+ * Launches Gemini could not rate are treated as "maybe" so nothing is hidden by mistake.
+ */
+export function applyFit(rows: ScoreRow[], fits: Map<string, FitResult>): { ranked: FitRow[]; lowFit: FitRow[] } {
+  const all: FitRow[] = rows.map((r) => {
+    const f = fits.get(r.post.id);
+    const fit: Fit = f?.fit ?? "maybe";
+    const fitFactor = FIT_FACTOR[fit];
+    return { ...r, fit, fitReason: f?.reason, fitRated: !!f, fitFactor, baseScore: r.score, finalScore: round1(r.score * (fit === "poor" ? 1 : fitFactor)) };
+  });
+  const ranked = all.filter((r) => r.fit !== "poor").sort((a, b) => b.finalScore - a.finalScore || b.post.votesCount - a.post.votesCount);
+  const lowFit = all.filter((r) => r.fit === "poor").sort((a, b) => b.baseScore - a.baseScore);
+  return { ranked, lowFit };
+}
+
+/** Fit is judged from what the product is, never from its popularity. */
+export function buildFitInput(post: PHPost): FitInput {
+  return {
+    id: post.id,
+    name: post.name,
+    tagline: post.tagline,
+    description: post.description.replace(/\s+/g, " ").trim().slice(0, 250),
+    topics: post.topics.slice(0, 5),
   };
 }

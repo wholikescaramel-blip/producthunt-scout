@@ -40,6 +40,7 @@ export default function Home() {
   const requested = useRef<Set<string>>(new Set());
 
   const [view, setView] = useState<"list" | "contacted">("list");
+  const [showLow, setShowLow] = useState(false);
   const [shown, setShown] = useState(INITIAL_SHOWN);
   const [contacted, setContacted] = useState<Record<string, ContactedEntry>>({});
   const [hydrated, setHydrated] = useState(false);
@@ -108,6 +109,7 @@ export default function Home() {
     setOverrides({});
     requested.current = new Set();
     setShown(INITIAL_SHOWN);
+    setShowLow(false);
     setView("list");
     try {
       const res = await fetch("/api/scout", {
@@ -136,6 +138,7 @@ export default function Home() {
   const visible = products.filter((p) => !contacted[p.id]);
   const shownList = visible.slice(0, shown);
   const hiddenContacted = products.length - visible.length;
+  const lowVisible = (data?.lowFit ?? []).filter((p) => !contacted[p.id]);
 
   // Write angles for rows that are about to be shown but weren't generated up front.
   const needIds = shownList.filter((p) => p.angleSource === "pending" && !requested.current.has(p.id)).map((p) => p.id);
@@ -395,6 +398,10 @@ export default function Home() {
                             <td className="name">
                               <a href={p.url} target="_blank" rel="noreferrer">{p.name}</a>
                               <div className="desc">{p.oneLiner}</div>
+                              <span className={`fit fit-${p.fit}`} title={p.fitReason || undefined}>
+                                {p.fit === "good" ? "Good fit" : p.fitRated ? "Maybe fit" : "Fit not rated"}
+                              </span>
+                              {p.fitReason && <div className="tag">{p.fitReason}</div>}
                             </td>
                             <td>{p.founder}</td>
                             <td className="num">{p.upvotes}</td>
@@ -437,7 +444,10 @@ export default function Home() {
                               <td />
                               <td colSpan={7}>
                                 <div className="breakdown">
-                                  <strong>Score {p.score}</strong> = upvotes <strong>{b.upvotePts}</strong> / {pct(WEIGHT_UPVOTES)} + maker responsiveness <strong>{b.makerPts}</strong> / {pct(WEIGHT_MAKER)} + recency <strong>{b.recencyPts}</strong> / {pct(WEIGHT_RECENCY)}
+                                  <strong>Base score {p.baseScore}</strong> = upvotes <strong>{b.upvotePts}</strong> / {pct(WEIGHT_UPVOTES)} + maker responsiveness <strong>{b.makerPts}</strong> / {pct(WEIGHT_MAKER)} + recency <strong>{b.recencyPts}</strong> / {pct(WEIGHT_RECENCY)}
+                                  <div>
+                                    Fit: <strong>{p.fit}</strong> (x{p.fitFactor}){!p.fitRated && " - Gemini could not rate it, so it counts as a maybe"}. <strong>Final score {p.score}</strong> = {p.baseScore} x {p.fitFactor}
+                                  </div>
                                   <div className="tag">
                                     Upvotes: {p.upvotes}. Maker comments: {p.makerComments}
                                     {p.makerComments > 0 ? ` (${b.weightedComments} weighted; short thank-yous count 0.3)` : " (none found in the latest 40 comments, so 0 points)"}.
@@ -490,6 +500,42 @@ export default function Home() {
               )}
             </>
           )}
+          {lowVisible.length > 0 && (
+            <div style={{ marginTop: 18 }}>
+              <button className="ghost" onClick={() => setShowLow((v) => !v)} aria-expanded={showLow}>
+                {showLow ? "Hide" : "Show"} low-fit launches ({lowVisible.length})
+              </button>
+              {showLow && (
+                <>
+                  <p className="tag" style={{ margin: "8px 0" }}>
+                    Gemini judged these a poor fit for your product (a different customer, or a direct competitor), so they are kept out of the ranking. They are listed here in case it got one wrong.
+                  </p>
+                  <div className="table-wrap">
+                    <table style={{ minWidth: 680 }}>
+                      <thead>
+                        <tr><th>Product</th><th>Founder</th><th>Upvotes</th><th>Days since launch</th><th>Why it was set aside</th><th /></tr>
+                      </thead>
+                      <tbody>
+                        {lowVisible.map((p) => (
+                          <tr key={p.id}>
+                            <td className="name">
+                              <a href={p.url} target="_blank" rel="noreferrer">{p.name}</a>
+                              <div className="desc">{p.tagline}</div>
+                            </td>
+                            <td>{p.founder}</td>
+                            <td className="num">{p.upvotes}</td>
+                            <td className="num">{p.daysSinceLaunch === 0 ? "today" : `${p.daysSinceLaunch}d`}</td>
+                            <td>{p.fitReason || "Not a clear match for your product"}</td>
+                            <td><button className="ghost small" style={{ marginTop: 0 }} onClick={() => markContacted(p)}>Mark contacted</button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </section>
       )}
 
@@ -498,7 +544,7 @@ export default function Home() {
         <p>
           Score (0-100) = 55% upvotes + 30% maker responsiveness + 15% recency. Upvotes and maker points are log-scaled against the highest in the current list; recency falls from full points for a launch today to none at 7 days. Maker responsiveness is the number of
           comments written by the product&apos;s makers (latest 40 comments); short thank-you replies still count, at 0.3 of a full comment. A launch with no maker
-          comments is never removed, it just earns 0 of the 30 maker points. Click any score to see its breakdown. Outreach angles quote the product&apos;s own text
+          comments is never removed, it just earns 0 of the 30 maker points. Gemini also judges each launch as a good, maybe or poor fit for your product (same customer, not a competitor). Good fits keep their full score, maybe fits count 85%, and poor fits are set aside behind a toggle. Click any score to see its breakdown. Outreach angles quote the product&apos;s own text
           only when the quote can be found word-for-word in it; otherwise a plain angle is shown. Data comes from the Product Hunt API; angles and drafts are written by Gemini Flash.
         </p>
       </details>
