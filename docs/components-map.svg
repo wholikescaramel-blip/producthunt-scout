@@ -58,19 +58,20 @@
 <text x="764" y="415" text-anchor="middle" font-size="14.5" fill="#374151">Max 5 categories, last 7 days</text>
 <rect x="1302" y="353" width="292" height="110" rx="12" fill="#fff" stroke="#4338ca" stroke-width="3"/>
 <text x="1448" y="387" text-anchor="middle" font-size="17" font-weight="700" fill="#111827">Scores and ranks</text>
-<text x="1448" y="415" text-anchor="middle" font-size="14.5" fill="#374151">55% upvotes, 30% maker</text>
-<text x="1448" y="437" text-anchor="middle" font-size="14.5" fill="#374151">responsiveness, 15% recency</text>
+<text x="1448" y="415" text-anchor="middle" font-size="14.5" fill="#374151">55% upvotes, 30% maker response,</text>
+<text x="1448" y="437" text-anchor="middle" font-size="14.5" fill="#374151">15% recency, adjusted for fit</text>
 <rect x="1645" y="353" width="292" height="110" rx="12" fill="#fff" stroke="#4338ca" stroke-width="3"/>
 <text x="1791" y="387" text-anchor="middle" font-size="17" font-weight="700" fill="#111827">Ranked list</text>
 <text x="1791" y="415" text-anchor="middle" font-size="14.5" fill="#374151">Top 50, shown 20 at a time</text>
+<text x="1791" y="437" text-anchor="middle" font-size="14.5" fill="#374151">poor fits set aside</text>
 <rect x="960" y="533" width="292" height="110" rx="12" fill="#fff" stroke="#0f766e" stroke-width="3"/>
 <text x="1106" y="567" text-anchor="middle" font-size="17" font-weight="700" fill="#111827">Live launches</text>
 <text x="1106" y="595" text-anchor="middle" font-size="14.5" fill="#374151">New launches and their</text>
 <text x="1106" y="617" text-anchor="middle" font-size="14.5" fill="#374151">latest comments</text>
 <rect x="1302" y="713" width="292" height="110" rx="12" fill="#fff" stroke="#7e22ce" stroke-width="3"/>
-<text x="1448" y="747" text-anchor="middle" font-size="17" font-weight="700" fill="#111827">Writes outreach angles</text>
-<text x="1448" y="775" text-anchor="middle" font-size="14.5" fill="#374151">One-liner, angle and draft</text>
-<text x="1448" y="797" text-anchor="middle" font-size="14.5" fill="#374151">message for each launch</text>
+<text x="1448" y="747" text-anchor="middle" font-size="17" font-weight="700" fill="#111827">Judges fit, writes angles</text>
+<text x="1448" y="775" text-anchor="middle" font-size="14.5" fill="#374151">Fit rating for each launch, plus</text>
+<text x="1448" y="797" text-anchor="middle" font-size="14.5" fill="#374151">the angle and draft message</text>
 <rect x="1645" y="893" width="292" height="110" rx="12" fill="#fff" stroke="#475569" stroke-width="3"/>
 <text x="1791" y="927" text-anchor="middle" font-size="17" font-weight="700" fill="#111827">Remembers contacted</text>
 <text x="1791" y="955" text-anchor="middle" font-size="14.5" fill="#374151">Saved in her browser and</text>

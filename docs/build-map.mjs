@@ -25,10 +25,10 @@ const BOXES = {
   A: [0, 0, "Sets up a scan", ["Picks her product and up to 5", "categories, then clicks Generate"]],
   K: [0, 4, "Reaches out", ["Reviews the list, contacts founders,", "marks them as contacted"]],
   B: [1, 1, "Checks the request", ["Max 5 categories, last 7 days"]],
-  E: [1, 3, "Scores and ranks", ["55% upvotes, 30% maker", "responsiveness, 15% recency"]],
-  F: [1, 4, "Ranked list", ["Top 50, shown 20 at a time"]],
+  E: [1, 3, "Scores and ranks", ["55% upvotes, 30% maker response,", "15% recency, adjusted for fit"]],
+  F: [1, 4, "Ranked list", ["Top 50, shown 20 at a time", "poor fits set aside"]],
   C: [2, 2, "Live launches", ["New launches and their", "latest comments"]],
-  G: [3, 3, "Writes outreach angles", ["One-liner, angle and draft", "message for each launch"]],
+  G: [3, 3, "Judges fit, writes angles", ["Fit rating for each launch, plus", "the angle and draft message"]],
   H: [4, 4, "Remembers contacted", ["Saved in her browser and", "hidden from the main list"]],
 };
 
