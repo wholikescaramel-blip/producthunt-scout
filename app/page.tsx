@@ -156,6 +156,7 @@ export default function Home() {
     const finish = () => {
       if (done) return;
       done = true;
+      if (landingRef.current) gsap.set(landingRef.current, { clearProps: "all" });
       setStage("results");
     };
     gsap.to(landingRef.current, { opacity: 0, y: -24, duration: 0.5, ease: "power2.in", onComplete: finish });
@@ -334,7 +335,7 @@ export default function Home() {
   /* ---------------------------------- landing ---------------------------------- */
   if (stage === "landing") {
     return (
-      <div ref={landingRef} className="landing">
+      <div key="landing" ref={landingRef} className="landing">
         <div ref={bgRef} className={`bg${loading ? " loading" : ""}`} aria-hidden="true" />
         <div className="veil" aria-hidden="true" />
         <div className="petals" aria-hidden="true">
@@ -353,12 +354,11 @@ export default function Home() {
         </nav>
 
         <section className="hero">
-          <p className="eyebrow hero-in">Product Hunt, first week</p>
           <h1 className="hero-in">
-            Meet your next partner <em>while the launch is still warm.</em>
+            Catch new launches <em>while they&apos;re warm.</em>
           </h1>
           <p className="lede hero-in">
-            New launches from the last 7 days, checked for fit, ranked by traction and by how quickly the makers reply, each with an outreach angle.
+            Ranked by traction, maker response and fit, with an outreach angle for each.
           </p>
 
           <div className="form-card">
@@ -431,7 +431,7 @@ export default function Home() {
 
   /* ---------------------------------- results ---------------------------------- */
   return (
-    <div ref={resultsRef} className="results">
+    <div key="results" ref={resultsRef} className="results">
       <div className="strip" aria-hidden="true" />
       <div className="wrap">
         <nav className="topnav dark">
