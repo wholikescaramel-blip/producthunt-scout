@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { DEFAULT_PROFILE, DEFAULT_TOPICS, INITIAL_SHOWN, MAX_TOPICS, SHOW_MORE_STEP, TOPICS } from "@/lib/config";
+import { DEFAULT_PROFILE, DEFAULT_TOPICS, INITIAL_SHOWN, MAX_TOPICS, SHOW_MORE_STEP, TOPICS, WEIGHT_MAKER, WEIGHT_RECENCY, WEIGHT_UPVOTES } from "@/lib/config";
 import type { EnrichInput, Evidence, ScoredProduct, ScoutResponse } from "@/lib/types";
 
 type Topic = { slug: string; label: string };
@@ -20,6 +20,7 @@ type ContactedEntry = {
 
 const QUICK: Topic[] = TOPICS.map((t) => ({ slug: t.slug, label: t.label }));
 const STORE_KEY = "ph-scout-contacted-v1";
+const pct = (w: number) => Math.round(w * 100);
 
 function csvCell(v: string | number) {
   return `"${String(v).replace(/"/g, '""')}"`;
@@ -436,11 +437,11 @@ export default function Home() {
                               <td />
                               <td colSpan={7}>
                                 <div className="breakdown">
-                                  <strong>Score {p.score}</strong> = upvotes <strong>{b.upvotePts}</strong> / 60 + maker responsiveness <strong>{b.makerPts}</strong> / 40
+                                  <strong>Score {p.score}</strong> = upvotes <strong>{b.upvotePts}</strong> / {pct(WEIGHT_UPVOTES)} + maker responsiveness <strong>{b.makerPts}</strong> / {pct(WEIGHT_MAKER)} + recency <strong>{b.recencyPts}</strong> / {pct(WEIGHT_RECENCY)}
                                   <div className="tag">
                                     Upvotes: {p.upvotes}. Maker comments: {p.makerComments}
                                     {p.makerComments > 0 ? ` (${b.weightedComments} weighted; short thank-yous count 0.3)` : " (none found in the latest 40 comments, so 0 points)"}.
-                                    Each part is scaled against the top launch in this list.
+                                    Upvotes and maker points are scaled against the top launch in this list. Recency: launched {p.daysSinceLaunch === 0 ? "today" : `${p.daysSinceLaunch} day(s) ago`}, newer earns more.
                                   </div>
                                 </div>
                               </td>
@@ -495,9 +496,9 @@ export default function Home() {
       <details className="how">
         <summary>How the score works</summary>
         <p>
-          Score (0-100) = 60% upvotes + 40% maker responsiveness, each log-scaled against the highest in the current list. Maker responsiveness is the number of
+          Score (0-100) = 55% upvotes + 30% maker responsiveness + 15% recency. Upvotes and maker points are log-scaled against the highest in the current list; recency falls from full points for a launch today to none at 7 days. Maker responsiveness is the number of
           comments written by the product&apos;s makers (latest 40 comments); short thank-you replies still count, at 0.3 of a full comment. A launch with no maker
-          comments is never removed, it just earns 0 of the 40 maker points. Click any score to see its breakdown. Outreach angles quote the product&apos;s own text
+          comments is never removed, it just earns 0 of the 30 maker points. Click any score to see its breakdown. Outreach angles quote the product&apos;s own text
           only when the quote can be found word-for-word in it; otherwise a plain angle is shown. Data comes from the Product Hunt API; angles and drafts are written by Gemini Flash.
         </p>
       </details>

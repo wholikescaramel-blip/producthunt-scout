@@ -32,7 +32,7 @@ export async function runScout(req: ScoutRequest): Promise<ScoutResponse> {
   const inWindow = posts.filter((p) => daysSince(p.launchedAt, now) <= req.days);
   if (inWindow.length === 0) warnings.push("No launches matched these categories in the selected window.");
 
-  const ranked = scorePosts(inWindow).slice(0, MAX_RESULTS);
+  const ranked = scorePosts(inWindow, now, req.days).slice(0, MAX_RESULTS);
   const inputs = ranked.map((r) => buildEnrichInput(r.post));
 
   // Angles are written up front for the first batch; the rest are requested on demand ("Show more").
@@ -63,7 +63,7 @@ export async function runScout(req: ScoutRequest): Promise<ScoutResponse> {
         daysSinceLaunch: daysSince(r.post.launchedAt, now),
         makerComments: r.makerComments,
         score: r.score,
-        breakdown: { upvotePts: r.upvotePts, makerPts: r.makerPts, weightedComments: Math.round(r.weightedComments * 10) / 10 },
+        breakdown: { upvotePts: r.upvotePts, makerPts: r.makerPts, recencyPts: r.recencyPts, weightedComments: Math.round(r.weightedComments * 10) / 10 },
         outreachAngle: e?.angle ?? "",
         evidence: e?.evidence,
         angleSource: e ? e.source : "pending",

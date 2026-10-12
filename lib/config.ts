@@ -30,8 +30,9 @@ export const INITIAL_SHOWN = 20; // rows shown first
 export const SHOW_MORE_STEP = 10;
 export const INITIAL_ENRICH = 20; // products that get Gemini angles up front
 
-// Score = 60% upvotes + 40% maker responsiveness (the two signals in the brief).
-export const WEIGHT_UPVOTES = 0.6;
-export const WEIGHT_MAKER = 0.4;
+// Score = 55% upvotes + 30% maker responsiveness + 15% recency (newer launches are more time-sensitive).
+export const WEIGHT_UPVOTES = 0.55;
+export const WEIGHT_MAKER = 0.3;
+export const WEIGHT_RECENCY = 0.15;
 // A maker comment that is just a thank-you / generic reply still counts, at this weight.
 export const GENERIC_COMMENT_WEIGHT = 0.3;

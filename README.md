@@ -4,7 +4,7 @@ Ranks Product Hunt launches from the last 7 days (in chosen categories) by upvot
 
 ## How it works
 1. `POST /api/scout` pulls launches per category from the Product Hunt GraphQL API (votes, comments, makers).
-2. Score (0-100) = 60% upvotes + 40% maker responsiveness, each log-scaled against the cohort max. Every maker comment counts; short thank-you replies count at 0.3.
+2. Score (0-100) = 55% upvotes + 30% maker responsiveness + 15% recency. Upvotes and maker points are log-scaled against the cohort max; every maker comment counts, and short thank-you replies count at 0.3.
 3. One batched Gemini call writes the one-liner and outreach angle for each product (retries and falls back across Flash models, then to a template).
 4. If Product Hunt is unreachable, the app serves a bundled real-data snapshot (`data/snapshot.json`) with a banner.
 

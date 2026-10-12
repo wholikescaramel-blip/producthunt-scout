@@ -54,8 +54,9 @@ export interface Evidence {
 }
 
 export interface ScoreBreakdown {
-  upvotePts: number; // out of 60
-  makerPts: number; // out of 40
+  upvotePts: number; // out of 55
+  makerPts: number; // out of 30
+  recencyPts: number; // out of 15
   weightedComments: number;
 }
 

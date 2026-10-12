@@ -1,4 +1,4 @@
-import { GENERIC_COMMENT_WEIGHT, WEIGHT_MAKER, WEIGHT_UPVOTES } from "./config";
+import { GENERIC_COMMENT_WEIGHT, WEIGHT_MAKER, WEIGHT_RECENCY, WEIGHT_UPVOTES, WINDOW_DAYS } from "./config";
 import type { ContactLinks, EnrichInput, PHComment, PHPost } from "./types";
 
 const THANKS = /\b(thanks?|thank you|thx|ty|appreciate|cheers|welcome|glad you)\b/i;
@@ -35,11 +35,18 @@ export interface ScoreRow {
   weightedComments: number;
   upvotePts: number; // out of 100 * WEIGHT_UPVOTES
   makerPts: number; // out of 100 * WEIGHT_MAKER
+  recencyPts: number; // out of 100 * WEIGHT_RECENCY
   score: number;
 }
 
-/** score = upvote points + maker points, each = weight x (log-scaled value / cohort max). */
-export function scorePosts(posts: PHPost[]): ScoreRow[] {
+/** 1 for a launch from this instant, falling linearly to 0 at the edge of the window. */
+export function recencyFactor(launchedAt: string, now: number, windowDays: number): number {
+  const ageDays = (now - new Date(launchedAt).getTime()) / 86_400_000;
+  return Math.max(0, Math.min(1, 1 - ageDays / windowDays));
+}
+
+/** score = upvote pts + maker pts (each weight x log-scaled value / cohort max) + recency pts (weight x recency factor). */
+export function scorePosts(posts: PHPost[], now = Date.now(), windowDays = WINDOW_DAYS): ScoreRow[] {
   const rows = posts.map((post) => {
     const m = makerStats(post);
     return { post, makerComments: m.count, weightedComments: m.weighted };
@@ -50,7 +57,8 @@ export function scorePosts(posts: PHPost[]): ScoreRow[] {
     .map((r) => {
       const upvotePts = round1(100 * WEIGHT_UPVOTES * norm(r.post.votesCount, maxVotes));
       const makerPts = round1(100 * WEIGHT_MAKER * norm(r.weightedComments, maxMaker));
-      return { ...r, upvotePts, makerPts, score: round1(upvotePts + makerPts) };
+      const recencyPts = round1(100 * WEIGHT_RECENCY * recencyFactor(r.post.launchedAt, now, windowDays));
+      return { ...r, upvotePts, makerPts, recencyPts, score: round1(upvotePts + makerPts + recencyPts) };
     })
     .sort((a, b) => b.score - a.score || b.post.votesCount - a.post.votesCount);
 }
